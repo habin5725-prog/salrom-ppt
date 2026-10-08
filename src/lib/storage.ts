@@ -2,12 +2,20 @@ import { openDB, type DBSchema } from 'idb'
 import type { AppData, Backup, Settings, Song, Week } from '../types'
 
 const DB_NAME = 'salrom-ppt'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STATE_KEY = 'app-data'
 const FALLBACK_KEY = 'salrom-ppt-emergency-state'
+const RESET_RECOVERY_FALLBACK_KEY = 'salrom-ppt-reset-recoveries'
+
+export interface ResetRecovery {
+  id: string
+  createdAt: string
+  data: AppData
+}
 
 interface SalromDB extends DBSchema {
   state: { key: string; value: AppData }
+  resetRecovery: { key: string; value: ResetRecovery }
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -135,6 +143,7 @@ async function database() {
   return openDB<SalromDB>(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('state')) db.createObjectStore('state')
+      if (!db.objectStoreNames.contains('resetRecovery')) db.createObjectStore('resetRecovery')
     },
   })
 }
@@ -202,6 +211,51 @@ export function createBackup(data: AppData): Backup {
     createdAt,
     data: structuredClone({ songs: data.songs, weeks: data.weeks, settings: data.settings }),
   }
+}
+
+/** Keep a full pre-reset snapshot outside app-data so clearing app-data cannot erase it. */
+export async function saveResetRecovery(data: AppData): Promise<ResetRecovery> {
+  const recovery: ResetRecovery = {
+    id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `reset-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    data: normalizeAppData(data),
+  }
+  try {
+    const db = await database()
+    await db.put('resetRecovery', recovery, recovery.id)
+    return recovery
+  } catch (databaseError) {
+    try {
+      const existing = JSON.parse(localStorage.getItem(RESET_RECOVERY_FALLBACK_KEY) ?? '[]') as unknown
+      const recoveries = Array.isArray(existing) ? existing : []
+      localStorage.setItem(RESET_RECOVERY_FALLBACK_KEY, JSON.stringify([...recoveries, recovery]))
+      return recovery
+    } catch {
+      throw new Error('초기화 전 복구 백업을 저장하지 못했습니다. 데이터를 삭제하지 않았습니다.', { cause: databaseError })
+    }
+  }
+}
+
+/** List pre-reset snapshots from both durable browser storage locations. */
+export async function listResetRecoveries(): Promise<ResetRecovery[]> {
+  let stored: ResetRecovery[] = []
+  try {
+    const db = await database()
+    stored = await db.getAll('resetRecovery')
+  } catch { /* the localStorage fallback may still have snapshots */ }
+  let fallback: ResetRecovery[] = []
+  try {
+    const value = JSON.parse(localStorage.getItem(RESET_RECOVERY_FALLBACK_KEY) ?? '[]') as unknown
+    fallback = Array.isArray(value) ? value as ResetRecovery[] : []
+  } catch { /* ignore an unreadable fallback */ }
+  const byId = new Map<string, ResetRecovery>()
+  for (const candidate of [...stored, ...fallback]) {
+    try {
+      if (typeof candidate.id !== 'string' || typeof candidate.createdAt !== 'string') continue
+      byId.set(candidate.id, { ...candidate, data: normalizeAppData(candidate.data) })
+    } catch { /* ignore an invalid recovery record */ }
+  }
+  return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 export function exportDataJson(data: AppData): string {

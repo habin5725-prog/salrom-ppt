@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppData, Slide, Song, Week, WeekItem } from './types'
 import { createEmptyData, loadAppData, normalizeTitle, saveAppData } from './lib/storage'
 import { isAdminAuthenticated, isEditorAuthenticated, lockEditor, unlockAdmin, unlockEditor } from './lib/auth'
 import { splitLyrics } from './lib/split'
 import { exportWeekPptx, getWeekPresentationSlides } from './lib/pptx'
 import { fitSlideText } from './lib/fit'
+import { createSerializedSaveQueue } from './lib/saveQueue'
 import SlideCanvas from './components/SlideCanvas'
 import SlideEditor from './components/SlideEditor'
 import Presentation from './components/Presentation'
@@ -53,7 +54,19 @@ export default function App() {
   const saveSkip = useRef(true)
   const dataRef = useRef<AppData | null>(null)
   const saveGeneration = useRef(0)
+  const saveQueue = useRef(createSerializedSaveQueue(saveAppData))
+  const requestedView = useRef<View>('week')
   const dragItem = useRef<string | null>(null)
+
+  const enqueueSave = useCallback((snapshot: AppData, generation: number) => {
+    void saveQueue.current(snapshot, generation).then(() => {
+      if (generation === saveGeneration.current) setSaveState('saved')
+    }).catch(reason => {
+      if (generation !== saveGeneration.current) return
+      setSaveState('error')
+      setError(reason instanceof Error ? reason.message : '자동 저장에 실패했습니다. JSON 백업을 내려받아 주세요.')
+    })
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -76,30 +89,25 @@ export default function App() {
     if (saveSkip.current) { saveSkip.current = false; return }
     const generation = ++saveGeneration.current
     setSaveState('saving')
-    const timer = window.setTimeout(() => {
-      saveAppData(data).then(() => {
-        if (generation === saveGeneration.current) setSaveState('saved')
-      }).catch(reason => {
-        setSaveState('error')
-        setError(reason instanceof Error ? reason.message : '자동 저장에 실패했습니다. JSON 백업을 내려받아 주세요.')
-      })
-    }, 450)
+    const timer = window.setTimeout(() => enqueueSave(data, generation), 450)
     return () => window.clearTimeout(timer)
-  }, [data])
+  }, [data, enqueueSave])
 
   useEffect(() => {
     const unload = (event: BeforeUnloadEvent) => {
-      if (saveState !== 'saving') return
+      if (saveState === 'saved') return
       event.preventDefault()
       event.returnValue = ''
     }
     const flush = () => {
-      if (document.visibilityState === 'hidden' && dataRef.current && saveState === 'saving') void saveAppData(dataRef.current)
+      if (document.visibilityState === 'hidden' && dataRef.current && saveState !== 'saved') {
+        enqueueSave(dataRef.current, saveGeneration.current)
+      }
     }
     window.addEventListener('beforeunload', unload)
     document.addEventListener('visibilitychange', flush)
     return () => { window.removeEventListener('beforeunload', unload); document.removeEventListener('visibilitychange', flush) }
-  }, [saveState])
+  }, [saveState, enqueueSave])
 
   useEffect(() => {
     if (!notice) return
@@ -133,14 +141,14 @@ export default function App() {
     setView('week')
   }
   const needEditor = (next: View) => {
-    if (!editing) { setPassword(''); setAuthError(''); setModal('editor'); return }
+    if (!editing) { requestedView.current = next; setPassword(''); setAuthError(''); setModal('editor'); return }
     setView(next)
   }
   const submitPassword = () => {
     if (modal === 'editor') {
       if (!unlockEditor(password)) { setAuthError('비밀번호가 올바르지 않습니다.'); return }
       setEditing(true)
-      setView('week')
+      setView(requestedView.current)
     } else if (modal === 'admin') {
       if (!unlockAdmin(password)) { setAuthError('비밀번호가 올바르지 않습니다.'); return }
       setAdmin(true)
@@ -227,7 +235,7 @@ export default function App() {
   const selectHistoryWeek = (selected: Week) => { setWeekId(selected.id); setItemId(selected.items[0]?.id ?? null); setView(editing ? 'week' : 'home') }
   const cloneWeek = (source: Week) => {
     const now = iso()
-    const created: Week = { ...structuredClone(source), id: newId(), name: `${source.name} 복사본`, items: source.items.map(entry => ({ ...entry, id: newId(), slides: cloneSlides(entry.slides) })), createdAt: now, updatedAt: now, exportedAt: undefined }
+    const created: Week = { ...structuredClone(source), id: newId(), name: `${source.name} 복사본`, items: source.items.map(entry => ({ ...entry, id: newId(), slides: cloneSlides(entry.slides), sourceMode: 'copy' })), createdAt: now, updatedAt: now, exportedAt: undefined }
     update(current => ({ ...current, weeks: [...current.weeks, created] }))
     setWeekId(created.id); setItemId(created.items[0]?.id ?? null); setView('week')
   }
@@ -245,7 +253,7 @@ export default function App() {
         </nav>
         <div className="topbar-actions">
           {editing && <span className={`save-indicator save-indicator--${saveState}`} aria-live="polite">{saveState === 'saving' ? '저장 중' : saveState === 'error' ? '저장 오류' : '저장됨'}</span>}
-          <button className="button button--small button--outline" onClick={editing ? leaveEditor : () => { setPassword(''); setAuthError(''); setModal('editor') }}>{editing ? '편집 종료' : '편집 시작'}</button>
+          <button className="button button--small button--outline" onClick={editing ? leaveEditor : () => { requestedView.current = 'week'; setPassword(''); setAuthError(''); setModal('editor') }}>{editing ? '편집 종료' : '편집 시작'}</button>
         </div>
       </header>
       <main className="main-area">
