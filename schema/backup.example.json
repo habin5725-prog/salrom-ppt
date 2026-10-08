@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-10-08T00:00:00.000Z",
+  "data": {
+    "songs": [{
+      "id": "example-song",
+      "title": "예시 찬양",
+      "normalizedTitle": "예시찬양",
+      "rawLyrics": "새 아침에 마음을 모아\n함께 노래합니다",
+      "slides": [{ "id": "example-slide", "text": "새 아침에 마음을 모아\n함께 노래합니다", "section": "Verse" }],
+      "createdAt": "2026-10-08T00:00:00.000Z",
+      "updatedAt": "2026-10-08T00:00:00.000Z",
+      "version": 1
+    }],
+    "weeks": [{
+      "id": "example-week",
+      "date": "2026-10-11",
+      "name": "예시 주일예배",
+      "items": [{
+        "id": "example-item",
+        "type": "song",
+        "title": "예시 찬양",
+        "songId": "example-song",
+        "slides": [{ "id": "example-snapshot", "text": "새 아침에 마음을 모아\n함께 노래합니다", "section": "Verse" }],
+        "sourceMode": "copy"
+      }],
+      "createdAt": "2026-10-08T00:00:00.000Z",
+      "updatedAt": "2026-10-08T00:00:00.000Z"
+    }],
+    "settings": {
+      "fontSize": 42,
+      "minFontSize": 26,
+      "maxLines": 2,
+      "safeMargin": 0.08,
+      "titleSlides": false,
+      "showCounter": false,
+      "clickToAdvance": false
+    },
+    "backups": []
+  }
+}

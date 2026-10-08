@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "data": {
+    "songs": [],
+    "weeks": [],
+    "settings": {
+      "fontSize": 42,
+      "minFontSize": 26,
+      "maxLines": 2,
+      "safeMargin": 0.08,
+      "titleSlides": false,
+      "showCounter": false,
+      "clickToAdvance": false
+    },
+    "backups": []
+  }
+}
