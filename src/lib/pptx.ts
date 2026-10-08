@@ -1,6 +1,7 @@
 import type pptxgen from 'pptxgenjs'
 import type { Settings, Week } from '../types'
 import { fitSlideText, marginFraction } from './fit'
+import { ensureFontLoaded, getPptxFontFamily, getPptxFontWeight } from './fonts'
 
 const WIDTH_IN = 13.333333
 const HEIGHT_IN = 7.5
@@ -36,7 +37,10 @@ export function getPptxFilename(week: Pick<Week, 'date' | 'name'>): string {
 
 export async function buildWeekPptx(week: Week, settings: Settings): Promise<pptxgen> {
   // Loading the generator only when exporting keeps presentation startup light.
+  await ensureFontLoaded(settings.fontFamily)
   const { default: PptxGenJS } = await import('pptxgenjs')
+  const fontFamily = getPptxFontFamily(settings)
+  const uploadedFontIsBold = getPptxFontWeight(settings) >= 600
   const deck = new PptxGenJS()
   deck.defineLayout({ name: 'SALROM_WIDE', width: WIDTH_IN, height: HEIGHT_IN })
   deck.layout = 'SALROM_WIDE'
@@ -45,8 +49,8 @@ export async function buildWeekPptx(week: Week, settings: Settings): Promise<ppt
   deck.title = `${week.date} ${week.name}`
   deck.company = 'SALROM'
   deck.theme = {
-    headFontFace: 'Paperlogy',
-    bodyFontFace: 'Paperlogy',
+    headFontFace: fontFamily,
+    bodyFontFace: fontFamily,
   }
 
   const margin = marginFraction(settings.safeMargin)
@@ -57,13 +61,14 @@ export async function buildWeekPptx(week: Week, settings: Settings): Promise<ppt
   for (const presentationSlide of getWeekPresentationSlides(week, settings)) {
     const slide = deck.addSlide()
     slide.background = { color: '000000' }
-    const fit = fitSlideText(presentationSlide.text, settings)
+    const bold = presentationSlide.kind === 'title' || uploadedFontIsBold
+    const fit = fitSlideText(presentationSlide.text, settings, bold ? 700 : 400)
     slide.addText(presentationSlide.text, {
       x, y, w, h,
-      fontFace: 'Paperlogy',
+      fontFace: fontFamily,
       fontSize: fit.fontSize,
       color: 'FFFFFF',
-      bold: presentationSlide.kind === 'title',
+      bold,
       align: 'center',
       valign: 'middle',
       margin: 0,

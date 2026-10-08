@@ -20,6 +20,7 @@ export interface SplitResult {
 }
 
 const splitDefaults: Settings = {
+  fontFamily: 'Pretendard',
   fontSize: 42,
   minFontSize: 26,
   maxLines: 2,
@@ -75,7 +76,7 @@ export function splitLyrics(rawLyrics: string, overrides: Partial<Settings> = {}
       const proposed = [...current, line]
       const fit = fitSlideText(proposed.join('\n'), settings)
       // Two dense lines can technically fit only after shrinking; separate them for legibility.
-      const density = proposed.reduce((sum, value) => sum + estimateLineWidthPt(value, settings.fontSize), 0)
+      const density = proposed.reduce((sum, value) => sum + estimateLineWidthPt(value, settings.fontSize, settings.fontFamily), 0)
       const tooDense = proposed.length > 1 && density > fit.availableWidthPt * 1.7
       if (current.length >= maxLines || (current.length > 0 && (!fit.fits || tooDense))) flush()
       current.push(line)

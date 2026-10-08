@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppData, Slide, Song, Week, WeekItem } from './types'
+import type { AppData, CustomFont, Slide, Song, Week, WeekItem } from './types'
 import { createEmptyData, loadAppData, normalizeTitle, saveAppData } from './lib/storage'
 import { isAdminAuthenticated, isEditorAuthenticated, lockEditor, unlockAdmin, unlockEditor } from './lib/auth'
 import { splitLyrics } from './lib/split'
@@ -10,6 +10,8 @@ import SlideCanvas from './components/SlideCanvas'
 import SlideEditor from './components/SlideEditor'
 import Presentation from './components/Presentation'
 import AdminPanel from './components/AdminPanel'
+import FontPicker from './components/FontPicker'
+import { customFontFamily, DEFAULT_FONT_FAMILY, fontDisplayName, getPptxFontFamily, registerCustomFonts } from './lib/fonts'
 
 type View = 'home' | 'week' | 'library' | 'history' | 'admin'
 type Modal = 'editor' | 'admin' | 'song' | 'picker' | 'overview' | null
@@ -34,6 +36,7 @@ function downloadText(text: string, name: string) {
 
 export default function App() {
   const [data, setData] = useState<AppData | null>(null)
+  const [loadMessage, setLoadMessage] = useState('')
   const [view, setView] = useState<View>('home')
   const [editing, setEditing] = useState(isEditorAuthenticated)
   const [admin, setAdmin] = useState(isAdminAuthenticated)
@@ -70,6 +73,8 @@ export default function App() {
 
   useEffect(() => {
     let active = true
+    const blocked = () => setLoadMessage('다른 탭의 SALROM PPT를 닫거나 새로고침해 주세요. 기존 자료를 안전하게 불러오기 위해 기다리고 있습니다.')
+    window.addEventListener('salrom-storage-blocked', blocked)
     loadAppData().then(result => {
       if (!active) return
       setData(result)
@@ -80,7 +85,7 @@ export default function App() {
       setError(reason instanceof Error ? reason.message : '자료를 열지 못했습니다. JSON 백업으로 복원해 주세요.')
       setData(createEmptyData())
     })
-    return () => { active = false }
+    return () => { active = false; window.removeEventListener('salrom-storage-blocked', blocked) }
   }, [])
 
   useEffect(() => {
@@ -115,7 +120,10 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [notice])
 
-  if (!data) return <div className="loading-screen"><span className="brand-mark">✦</span><strong>SALROM PPT</strong><p>자료를 불러오는 중입니다.</p></div>
+  if (!data) return <div className="loading-screen"><span className="brand-mark">✦</span><strong>SALROM PPT</strong><p role="status">{loadMessage || '자료를 불러오는 중입니다.'}</p></div>
+
+  registerCustomFonts(data.customFonts ?? [])
+  const selectedFontName = fontDisplayName(data.settings.fontFamily, data.customFonts)
 
   const weeks = [...data.weeks].sort((a, b) => b.date.localeCompare(a.date))
   const week = data.weeks.find(candidate => candidate.id === weekId) ?? weeks[0]
@@ -128,6 +136,13 @@ export default function App() {
   const duplicate = songTitle.trim() ? data.songs.find(candidate => candidate.normalizedTitle === normalizeTitle(songTitle) || (normalizeTitle(songTitle).length > 3 && candidate.normalizedTitle.includes(normalizeTitle(songTitle)))) : undefined
 
   const update = (updater: (current: AppData) => AppData) => setData(current => current ? updater(current) : current)
+  const changeFont = (family: string) => update(current => ({ ...current, settings: { ...current.settings, fontFamily: family } }))
+  const addFont = (font: CustomFont) => update(current => ({ ...current, customFonts: [...(current.customFonts ?? []).filter(existing => existing.id !== font.id), font] }))
+  const removeFont = (id: string) => update(current => ({
+    ...current, customFonts: (current.customFonts ?? []).filter(font => font.id !== id),
+    settings: current.settings.fontFamily === customFontFamily({ id }) ? { ...current.settings, fontFamily: DEFAULT_FONT_FAMILY } : current.settings,
+  }))
+  const fontPicker = <FontPicker compact value={data.settings.fontFamily} customFonts={data.customFonts ?? []} onChange={changeFont} onAddFont={addFont} onRemoveFont={removeFont} onError={setError} />
   const updateWeek = (updater: (current: Week) => Week) => {
     if (!week) return
     update(current => ({ ...current, weeks: current.weeks.map(candidate => candidate.id === week.id ? { ...updater(candidate), updatedAt: iso() } : candidate) }))
@@ -266,7 +281,7 @@ export default function App() {
             <div className="button-row"><button className="button" onClick={previewPresentation} disabled={!currentSlides.length}>예배 화면 열기</button><button className="button button--outline" onClick={() => needEditor('week')}>{editing ? '이번 주 편집' : '편집 시작'}</button></div>
             {!week && <p className="helper-text">현재 브라우저에 저장된 주간 자료가 없습니다. 편집 후 JSON 백업으로 다른 기기에 옮길 수 있습니다.</p>}
           </div>
-          <div className="home-stage"><div className="stage-heading"><span>화면 미리보기</span><span>16:9</span></div><SlideCanvas text={currentSlides[0]?.text ?? '찬양 가사를 입력하면\n이곳에 예배 화면이 보입니다'} settings={data.settings} /><p>검정 배경 · 흰 글씨 · Paperlogy</p></div>
+          <div className="home-stage"><div className="stage-heading"><span>화면 미리보기</span><span>16:9</span></div><SlideCanvas text={currentSlides[0]?.text ?? '찬양 가사를 입력하면\n이곳에 예배 화면이 보입니다'} settings={data.settings} /><p>검정 배경 · 흰 글씨 · {selectedFontName}</p></div>
         </section>}
 
         {view === 'week' && <section className="week-view">
@@ -282,7 +297,7 @@ export default function App() {
                   </div>)}</div>}
                 {item && <div className="editor-section"><div className="section-top"><div><span className="eyebrow">SLIDE EDITOR</span><h2>{item.type === 'general' ? <input className="inline-title" value={item.title} aria-label="일반 슬라이드 제목" onChange={event => updateWeek(current => ({ ...current, items: current.items.map(entry => entry.id === item.id ? { ...entry, title: event.target.value } : entry) }))} /> : item.title}</h2></div><span className="muted">카드를 클릭해 바로 수정 · Ctrl+Enter로 분리</span></div><SlideEditor key={item.id} slides={item.slides} onChange={updateItemSlides} maxLines={data.settings.maxLines} selectedId={slideId ?? undefined} onSelect={setSlideId} /></div>}
               </div>
-              <aside className="preview-panel"><div className="section-top"><h2>실시간 미리보기</h2><span>16:9</span></div><SlideCanvas text={focusedSlide?.text ?? '슬라이드를 선택하세요'} settings={data.settings} /><div className="preview-meta"><strong>{item?.title ?? '선택된 곡 없음'}</strong><span>{item && focusedSlide ? `${item.slides.findIndex(slide => slide.id === focusedSlide.id) + 1} / ${item.slides.length}` : ''}</span></div>{focusedSlide && fitSlideText(focusedSlide.text, data.settings).needsSplit && <p className="warning-text">가사가 안전 영역을 넘을 수 있습니다. 자동 분리를 검토하세요.</p>}<p className="preview-tip">PPTX를 사용할 예배용 PC에는 Paperlogy 글꼴을 설치해 주세요.</p><div className="preview-actions"><button className="button button--outline" onClick={() => setModal('overview')} disabled={!currentSlides.length}>전체 미리보기 · PPTX</button><button className="button" onClick={previewPresentation} disabled={!currentSlides.length}>예배 화면</button></div></aside>
+              <aside className="preview-panel"><div className="section-top"><h2>실시간 미리보기</h2><span>16:9</span></div><SlideCanvas text={focusedSlide?.text ?? '슬라이드를 선택하세요'} settings={data.settings} /><div className="preview-meta"><strong>{item?.title ?? '선택된 곡 없음'}</strong><span>{item && focusedSlide ? `${item.slides.findIndex(slide => slide.id === focusedSlide.id) + 1} / ${item.slides.length}` : ''}</span></div>{focusedSlide && fitSlideText(focusedSlide.text, data.settings).needsSplit && <p className="warning-text">가사가 안전 영역을 넘을 수 있습니다. 자동 분리를 검토하세요.</p>}<div className="preview-font"><span>가사 글꼴</span>{fontPicker}</div><p className="preview-tip">PPT를 여는 PC에도 {getPptxFontFamily(data.settings)} 글꼴을 설치해 주세요.</p><div className="preview-actions"><button className="button button--outline" onClick={() => setModal('overview')} disabled={!currentSlides.length}>전체 미리보기 · PPTX</button><button className="button" onClick={previewPresentation} disabled={!currentSlides.length}>예배 화면</button></div></aside>
             </div>
           </>}
         </section>}
@@ -291,7 +306,7 @@ export default function App() {
 
         {view === 'history' && <section className="list-view"><div className="page-heading"><div><span className="eyebrow">ARCHIVE</span><h1>지난 PPT</h1><p>저장된 주간 자료는 찬양 원본을 수정해도 바뀌지 않습니다.</p></div>{editing && <button className="button" onClick={newWeek}>새 주간 자료</button>}</div>{weeks.length ? <div className="history-grid">{weeks.map(entry => <article key={entry.id} className="history-card"><div className="history-card__date">{dateLabel(entry.date)}</div><h2>{entry.name}</h2><p>{entry.items.map(item => item.title).join(' · ') || '찬양 없음'}</p><div className="history-card__footer"><span>{entry.items.length}곡 · {getWeekPresentationSlides(entry, data.settings).length}장</span><div className="button-row"><button className="button button--small button--outline" onClick={() => selectHistoryWeek(entry)}>{editing ? '열기' : '보기'}</button>{editing && <button className="button button--small button--quiet" onClick={() => cloneWeek(entry)}>복제</button>}<button className="button button--small" onClick={() => { setWeekId(entry.id); const slides = getWeekPresentationSlides(entry, data.settings); if (slides.length) setPresentation(structuredClone(slides)); else setNotice('이 자료에는 슬라이드가 없습니다.') }}>송출</button></div></div></article>)}</div> : <div className="empty-card"><h2>저장된 지난 자료가 없습니다</h2><p>이번 주 PPT를 만들면 여기에 표시됩니다.</p></div>}</section>}
 
-        {view === 'admin' && admin && <AdminPanel data={data} onChange={update} onOpenWeek={id => { setWeekId(id); setView('week') }} onOpenSong={id => { setSongId(id); setView('library') }} onNotice={setNotice} onError={setError} />}
+        {view === 'admin' && admin && <AdminPanel data={data} onChange={update} onOpenWeek={id => { setWeekId(id); setView('week') }} onOpenSong={id => { setSongId(id); setView('library') }} onNotice={setNotice} onError={setError} onAddFont={addFont} onRemoveFont={removeFont} />}
       </main>
       <footer className="site-footer"><span>SALROM PPT</span><span>자료는 이 브라우저에 자동 저장됩니다.</span></footer>
     </div>

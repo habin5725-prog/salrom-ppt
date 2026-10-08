@@ -38,6 +38,7 @@ export interface Week {
 }
 
 export interface Settings {
+  fontFamily: string
   fontSize: number
   minFontSize: number
   maxLines: number
@@ -47,6 +48,16 @@ export interface Settings {
   clickToAdvance: boolean
 }
 
+export interface CustomFont {
+  id: string
+  name: string
+  family: string
+  fileName: string
+  dataUrl: string
+  createdAt: string
+  weight?: number
+}
+
 export interface Backup {
   id: string
   createdAt: string
@@ -54,6 +65,7 @@ export interface Backup {
     songs: Song[]
     weeks: Week[]
     settings: Settings
+    customFonts?: CustomFont[]
   }
 }
 
@@ -63,4 +75,5 @@ export interface AppData {
   settings: Settings
   backups: Backup[]
   lastBackupAt?: string
+  customFonts?: CustomFont[]
 }

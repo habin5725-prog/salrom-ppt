@@ -1,0 +1,36 @@
+Bundled font sources
+
+Pretendard Variable
+Source: https://github.com/orioncactus/pretendard
+Original asset: packages/pretendard/dist/web/variable/woff2/PretendardVariable.woff2
+License: Pretendard-OFL.txt (SIL Open Font License 1.1)
+Author: Kil Hyung-jin
+Weight axis: 45-920
+Local CSS family alias: Pretendard
+Original font family: Pretendard Variable
+
+Nanum Myeongjo
+Source: https://github.com/google/fonts/tree/main/ofl/nanummyeongjo
+Original assets: NanumMyeongjo-Regular.ttf, NanumMyeongjo-Bold.ttf
+License: NanumMyeongjo-OFL.txt (SIL Open Font License 1.1)
+Copyright: NHN Corporation
+Static weights: Regular 400, Bold 700
+Local CSS family alias: Nanum Myeongjo
+
+Paperlogy
+Source: https://github.com/Freesentation/paperlogy
+Local assets: Paperlogy-4Regular.woff2, Paperlogy-7Bold.woff2
+License: OFL-license.txt (SIL Open Font License 1.1)
+
+Files are hosted locally by this website. A chosen font is loaded when needed.
+Font source licenses and copyright notices are included with these assets.
+
+Verification (2026-10-08)
+Nanum originals contain all 11,172 modern Korean Hangul syllables.
+Internal Windows/PPTX family: NanumMyeongjo (Korean localized name: 나눔명조).
+CSS alias can remain Nanum Myeongjo.
+
+SHA-256:
+PretendardVariable.woff2 9599F12FD42FC0BCE1CD50B47A0C022E108D7AA64DD0D1BB0ED44F3282D900B4
+NanumMyeongjo-Regular.ttf 7ED9E8653A8ED04285D51DC343FFEA6EB3D9C73AFC27383EA8929EE4FFD03205
+NanumMyeongjo-Bold.ttf BC9ED8E60D93FE6DB054B8FB988481B625F2EEF8CB2317AD0E9834681B8FE3F3

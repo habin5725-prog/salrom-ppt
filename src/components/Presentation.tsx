@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent, PointerEvent, TouchEvent } from 'react'
 import { fitSlideText, marginFraction } from '../lib/fit'
+import { cssFontFamily, ensureFontLoaded } from '../lib/fonts'
 import type { Settings, Slide } from '../types'
 import './Presentation.css'
 
@@ -188,7 +189,7 @@ export default function Presentation({ slides, settings, onClose }: Presentation
       const availableHeight = height * (1 - 2 * margin)
       // The PPTX uses a 960 × 540 pt slide; this keeps text proportions identical.
       const viewportScale = Math.min(width / 960, height / 540)
-      const pptFit = fitSlideText(currentText, settings)
+      const pptFit = fitSlideText(currentText, settings, isTitleSlide ? 700 : 400)
       const preferredPx = Math.max(1, pptFit.fontSize * viewportScale)
       const minimumPx = Math.max(1, Math.min(preferredPx, settings.minFontSize * viewportScale))
 
@@ -240,11 +241,16 @@ export default function Presentation({ slides, settings, onClose }: Presentation
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleFit)
     observer?.observe(root)
     window.addEventListener('resize', scheduleFit)
-    if (document.fonts) void document.fonts.ready.then(scheduleFit).catch(() => undefined)
+    void ensureFontLoaded(settings.fontFamily).then(scheduleFit).catch(scheduleFit)
+    if (document.fonts) {
+      void document.fonts.ready.then(scheduleFit).catch(() => undefined)
+      document.fonts.addEventListener('loadingdone', scheduleFit)
+    }
     return () => {
       active = false
       observer?.disconnect()
       window.removeEventListener('resize', scheduleFit)
+      document.fonts?.removeEventListener('loadingdone', scheduleFit)
       window.cancelAnimationFrame(frame)
     }
   }, [currentText, deck.length, isTitleSlide, settings])
@@ -299,6 +305,7 @@ export default function Presentation({ slides, settings, onClose }: Presentation
               ref={textRef}
               className="presentation__text"
               style={{
+                fontFamily: cssFontFamily(settings.fontFamily),
                 fontSize: `${fittedText.fontPx}px`,
                 fontWeight: isTitleSlide ? 700 : 400,
                 transform: `scale(${fittedText.scale})`,

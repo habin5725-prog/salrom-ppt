@@ -1,4 +1,5 @@
 import type { Settings } from '../types'
+import { cssFontFamily } from './fonts'
 
 /** Dimensions in PDF/PPT points. The exported deck uses a 13.333 × 7.5 inch canvas. */
 export const SLIDE_WIDTH_PT = 960
@@ -31,19 +32,40 @@ function glyphWidth(char: string): number {
   return 0.58
 }
 
-/** Conservative, deterministic Paperlogy width estimate shared by screen and PPTX. */
-export function estimateLineWidthPt(line: string, fontSize: number): number {
+let measureContext: CanvasRenderingContext2D | null | undefined
+
+function getMeasureContext(): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null
+  if (measureContext === undefined) {
+    try {
+      measureContext = document.createElement('canvas').getContext('2d')
+    } catch {
+      measureContext = null
+    }
+  }
+  return measureContext
+}
+
+/** Browser measurements follow the selected font; server tests use a stable fallback. */
+export function estimateLineWidthPt(line: string, fontSize: number, fontFamily?: string, fontWeight = 400): number {
+  const context = fontFamily ? getMeasureContext() : null
+  if (context) {
+    // Measure at a large size so small preview rounding does not affect PPTX fitting.
+    context.font = `${fontWeight} 100px ${cssFontFamily(fontFamily!)}`
+    const width = context.measureText(line).width * fontSize / 100
+    if (Number.isFinite(width)) return width
+  }
   return [...line].reduce((total, char) => total + glyphWidth(char) * fontSize, 0)
 }
 
-export function fitSlideText(text: string, settings: Settings): TextFit {
+export function fitSlideText(text: string, settings: Settings, fontWeight = 400): TextFit {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   const margin = marginFraction(settings.safeMargin)
   const availableWidthPt = SLIDE_WIDTH_PT * (1 - margin * 2)
   const availableHeightPt = SLIDE_HEIGHT_PT * (1 - margin * 2)
   const maxFont = Math.max(12, Number.isFinite(settings.fontSize) ? settings.fontSize : 42)
   const minFont = Math.max(12, Math.min(maxFont, Number.isFinite(settings.minFontSize) ? settings.minFontSize : 26))
-  const widthUnits = Math.max(0, ...lines.map((line) => estimateLineWidthPt(line, 1)))
+  const widthUnits = Math.max(0, ...lines.map((line) => estimateLineWidthPt(line, 1, settings.fontFamily, fontWeight)))
   const widthLimit = widthUnits > 0 ? availableWidthPt / widthUnits : maxFont
   const heightLimit = lines.length > 0 ? availableHeightPt / (lines.length * 1.32) : maxFont
   const idealFont = Math.floor(Math.min(maxFont, widthLimit, heightLimit))

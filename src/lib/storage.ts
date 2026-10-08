@@ -1,8 +1,9 @@
-import { openDB, type DBSchema } from 'idb'
-import type { AppData, Backup, Settings, Song, Week } from '../types'
+import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import type { AppData, Backup, CustomFont, Settings, Song, Week } from '../types'
+import { cleanFontName, DEFAULT_FONT_FAMILY } from './fonts'
 
 const DB_NAME = 'salrom-ppt'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STATE_KEY = 'app-data'
 const FALLBACK_KEY = 'salrom-ppt-emergency-state'
 const RESET_RECOVERY_FALLBACK_KEY = 'salrom-ppt-reset-recoveries'
@@ -16,9 +17,13 @@ export interface ResetRecovery {
 interface SalromDB extends DBSchema {
   state: { key: string; value: AppData }
   resetRecovery: { key: string; value: ResetRecovery }
+  fontAssets: { key: string; value: string }
 }
 
+const savedFontAssets = new Map<string, string>()
+
 export const DEFAULT_SETTINGS: Settings = {
+  fontFamily: DEFAULT_FONT_FAMILY,
   fontSize: 42,
   minFontSize: 26,
   maxLines: 2,
@@ -29,7 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
 }
 
 export function createEmptyData(): AppData {
-  return { songs: [], weeks: [], settings: { ...DEFAULT_SETTINGS }, backups: [] }
+  return { songs: [], weeks: [], settings: { ...DEFAULT_SETTINGS }, backups: [], customFonts: [] }
 }
 
 export function normalizeTitle(title: string): string {
@@ -52,6 +57,7 @@ function normalizeSettings(value: unknown): Settings {
   const source = record(value) ? value : {}
   const fontSize = finite(source.fontSize, DEFAULT_SETTINGS.fontSize, 12, 120)
   return {
+    fontFamily: cleanFontName(string(source.fontFamily)) || DEFAULT_FONT_FAMILY,
     fontSize,
     minFontSize: Math.min(fontSize, finite(source.minFontSize, DEFAULT_SETTINGS.minFontSize, 12, 120)),
     maxLines: Math.round(finite(source.maxLines, DEFAULT_SETTINGS.maxLines, 1, 12)),
@@ -60,6 +66,18 @@ function normalizeSettings(value: unknown): Settings {
     showCounter: typeof source.showCounter === 'boolean' ? source.showCounter : DEFAULT_SETTINGS.showCounter,
     clickToAdvance: typeof source.clickToAdvance === 'boolean' ? source.clickToAdvance : DEFAULT_SETTINGS.clickToAdvance,
   }
+}
+
+function normalizeCustomFonts(value: unknown): CustomFont[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(record).slice(0, 30).flatMap(font => {
+    const dataUrl = string(font.dataUrl)
+    const id = cleanFontName(string(font.id))
+    const family = cleanFontName(string(font.family))
+    if (!id || !family || dataUrl.length > 22 * 1024 * 1024 || (dataUrl && !/^data:[^,]*;base64,[A-Za-z0-9+/=\r\n]+$/u.test(dataUrl))) return []
+    return [{ id, family, name: cleanFontName(string(font.name)) || family, fileName: string(font.fileName).slice(0, 255), dataUrl,
+      createdAt: string(font.createdAt, new Date().toISOString()), weight: finite(font.weight, 400, 100, 900) }]
+  })
 }
 
 function normalizeSlides(value: unknown): Song['slides'] {
@@ -127,6 +145,7 @@ export function normalizeAppData(value: unknown): AppData {
           songs: normalizeSongs(data.songs),
           weeks: normalizeWeeks(data.weeks),
           settings: normalizeSettings(data.settings),
+          customFonts: normalizeCustomFonts(data.customFonts),
         },
       }
     }) : []
@@ -135,17 +154,34 @@ export function normalizeAppData(value: unknown): AppData {
     weeks: normalizeWeeks(value.weeks),
     settings: normalizeSettings(value.settings),
     backups,
+    customFonts: normalizeCustomFonts(value.customFonts),
     ...(typeof value.lastBackupAt === 'string' ? { lastBackupAt: value.lastBackupAt } : {}),
   }
 }
 
-async function database() {
-  return openDB<SalromDB>(DB_NAME, DB_VERSION, {
+async function withDatabase<T>(work: (db: IDBPDatabase<SalromDB>) => Promise<T>): Promise<T> {
+  let connection: IDBPDatabase<SalromDB> | undefined
+  const db = await openDB<SalromDB>(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('state')) db.createObjectStore('state')
       if (!db.objectStoreNames.contains('resetRecovery')) db.createObjectStore('resetRecovery')
+      if (!db.objectStoreNames.contains('fontAssets')) db.createObjectStore('fontAssets')
+    },
+    blocked() {
+      // A tab running an older version must close its connection before this upgrade can finish.
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('salrom-storage-blocked'))
+    },
+    blocking() {
+      // Let a newer tab upgrade rather than leaving this connection open until the tab closes.
+      connection?.close()
     },
   })
+  connection = db
+  try {
+    return await work(db)
+  } finally {
+    db.close()
+  }
 }
 
 function emergencyData(): AppData | null {
@@ -176,8 +212,19 @@ export async function loadAppData(): Promise<AppData> {
   if (emergency) return emergency
   let stored: AppData | undefined
   try {
-    const db = await database()
-    stored = await db.get('state', STATE_KEY)
+    await withDatabase(async db => {
+      stored = await db.get('state', STATE_KEY)
+      if (stored) {
+        const hydrate = async (fonts: CustomFont[] = []) => Promise.all(fonts.map(async font => {
+          const dataUrl = font.dataUrl || await db.get('fontAssets', font.id) || ''
+          if (dataUrl) savedFontAssets.set(font.id, dataUrl)
+          return { ...font, dataUrl }
+        }))
+        stored = { ...stored, customFonts: await hydrate(stored.customFonts), backups: await Promise.all(stored.backups.map(async backup => ({
+          ...backup, data: { ...backup.data, customFonts: await hydrate(backup.data.customFonts) },
+        }))) }
+      }
+    })
   } catch { /* use deployment snapshot or an empty local library */ }
   if (stored) return normalizeAppData(stored)
   return (await loadPublishedData()) ?? createEmptyData()
@@ -187,8 +234,19 @@ export async function loadAppData(): Promise<AppData> {
 export async function saveAppData(data: AppData): Promise<void> {
   const normalized = normalizeAppData(data)
   try {
-    const db = await database()
-    await db.put('state', normalized, STATE_KEY)
+    await withDatabase(async db => {
+      // Font binaries live separately, so typing a lyric does not rewrite megabytes of font data.
+      const allFonts = new Map([...(normalized.customFonts ?? []), ...normalized.backups.flatMap(backup => backup.data.customFonts ?? [])].map(font => [font.id, font] as const))
+      const changedFonts = [...allFonts.values()].filter(font => font.dataUrl && savedFontAssets.get(font.id) !== font.dataUrl)
+      const strip = (fonts: CustomFont[] = []) => fonts.map(font => ({ ...font, dataUrl: '' }))
+      const storedData = { ...normalized, customFonts: strip(normalized.customFonts), backups: normalized.backups.map(backup => ({
+        ...backup, data: { ...backup.data, customFonts: strip(backup.data.customFonts) },
+      })) }
+      const tx = db.transaction(['state', 'fontAssets'], 'readwrite')
+      await Promise.all([tx.objectStore('state').put(storedData, STATE_KEY), ...changedFonts.map(font => tx.objectStore('fontAssets').put(font.dataUrl, font.id))])
+      await tx.done
+      for (const font of changedFonts) savedFontAssets.set(font.id, font.dataUrl)
+    })
     try { localStorage.removeItem(FALLBACK_KEY) } catch { /* storage might be disabled */ }
   } catch (error) {
     try {
@@ -209,7 +267,7 @@ export function createBackup(data: AppData): Backup {
   return {
     id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `backup-${Date.now()}`,
     createdAt,
-    data: structuredClone({ songs: data.songs, weeks: data.weeks, settings: data.settings }),
+    data: structuredClone({ songs: data.songs, weeks: data.weeks, settings: data.settings, customFonts: data.customFonts ?? [] }),
   }
 }
 
@@ -221,8 +279,7 @@ export async function saveResetRecovery(data: AppData): Promise<ResetRecovery> {
     data: normalizeAppData(data),
   }
   try {
-    const db = await database()
-    await db.put('resetRecovery', recovery, recovery.id)
+    await withDatabase(db => db.put('resetRecovery', recovery, recovery.id).then(() => undefined))
     return recovery
   } catch (databaseError) {
     try {
@@ -240,8 +297,7 @@ export async function saveResetRecovery(data: AppData): Promise<ResetRecovery> {
 export async function listResetRecoveries(): Promise<ResetRecovery[]> {
   let stored: ResetRecovery[] = []
   try {
-    const db = await database()
-    stored = await db.getAll('resetRecovery')
+    stored = await withDatabase(db => db.getAll('resetRecovery'))
   } catch { /* the localStorage fallback may still have snapshots */ }
   let fallback: ResetRecovery[] = []
   try {
@@ -259,7 +315,7 @@ export async function listResetRecoveries(): Promise<ResetRecovery[]> {
 }
 
 export function exportDataJson(data: AppData): string {
-  return JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), data: normalizeAppData(data) }, null, 2)
+  return JSON.stringify({ schemaVersion: 2, exportedAt: new Date().toISOString(), data: normalizeAppData(data) }, null, 2)
 }
 
 export function parseImportedData(json: string): AppData {
